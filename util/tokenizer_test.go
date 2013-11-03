@@ -1,16 +1,18 @@
 package util
 
 import (
-	"fmt"
 	"testing"
 )
 
-func TestAlaki(t *testing.T) {
-	tok := NewTokenizer("amir \"mohammad saied\" \"hassan gholi\" man")
-	var argv []string
-	argv = append(argv, tok.NextWord())
-	argv = append(argv, tok.NextParam())
-	argv = append(argv, tok.NextParam())
-	argv = append(argv, tok.NextParam())
-	fmt.Printf("%v\n", argv)
+func TestSearch(t *testing.T) {
+	tok := NewTokenizer("search any \"Comfortably Numb\"")
+	command := tok.NextParam()
+	if command != "search" {
+		t.Errorf("Command = %s, want %s", command, "search")
+	}
+	tok.NextParam()
+	query := tok.NextParam()
+	if query != "Comfortably Numb" {
+		t.Errorf("Query = %s, want %s", query, "Comfortably Numb")
+	}
 }
