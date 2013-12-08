@@ -195,7 +195,7 @@ func (p *Playlist) playNext() {
 // addTrack adds a new track to playlist
 func (p *Playlist) addTrack(track string) int {
 	p.tracks = append(p.tracks, track)
-	return p.length()
+	return p.length() - 1
 }
 
 // length returns number of tracks in playlist
