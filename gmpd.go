@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -84,6 +85,10 @@ var (
 	daemon     *gmpd
 	player     *Player
 	albumToIds map[string]string
+
+	serviceAddress = flag.String("address", ":6600", "gMPD service address")
+	email          = flag.String("email", "email", "Google account email")
+	password       = flag.String("password", "password", "Google account password")
 )
 
 // onMessage is GStreamer's playbin bus message callback.
@@ -520,7 +525,7 @@ func NewPlayer() *Player {
 
 // NewGmpd allocates a new gmpd.
 func NewGmpd() *gmpd {
-	gpmc := gpm.New("email", "password")
+	gpmc := gpm.New(*email, *password)
 	err := gpmc.Login()
 	if err != nil {
 		log.Fatalf("Login failed: %s", err.Error())
@@ -535,7 +540,7 @@ func NewGmpd() *gmpd {
 }
 
 func mpdListener() {
-	listener, err := net.Listen("tcp", ":6601")
+	listener, err := net.Listen("tcp", *serviceAddress)
 	if err != nil {
 		log.Fatalf("ListenAndServe: %s", err.Error())
 	}
@@ -551,6 +556,7 @@ func mpdListener() {
 }
 
 func init() {
+	flag.Parse()
 	daemon = NewGmpd()
 	player = NewPlayer()
 	albumToIds = make(map[string]string)
