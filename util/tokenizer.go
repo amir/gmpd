@@ -24,35 +24,44 @@ func NewTokenizer(input string) *Tokenizer {
 	return &Tokenizer{input, 0, 0}
 }
 
-// NextWord returns the next word from the input.
-func (t *Tokenizer) NextWord() string {
-	var runes []rune
-	for t.peek() != eol {
-		if !isSpace(t.peek()) {
-			runes = append(runes, t.next())
-		} else {
-			t.next()
-			return string(runes)
-		}
-	}
-	t.consumeSpaces()
-	return string(runes)
-}
-
 // NextParam returns the next param from the input
 // A word if not quoted, or a couple of words if they're quoted.
 func (t *Tokenizer) NextParam() string {
-	if t.peek() == '"' {
+	if t.peek() == eol {
+		return ""
+	} else if t.peek() == '"' {
 		return t.nextString()
 	}
 
-	return t.NextWord()
+	return t.nextWord()
+}
+
+// nextWord returns the next word from the input.
+func (t *Tokenizer) nextWord() string {
+	var runes []rune
+	for t.peek() != eol {
+		if isSpace(t.peek()) {
+			t.next()
+			return string(runes)
+		} else {
+			runes = append(runes, t.next())
+			if t.peek() == eol {
+				t.next()
+				return string(runes)
+			}
+		}
+	}
+	t.consumeSpaces()
+	return ""
 }
 
 // nextString returns the next quoted words in the input.
 func (t *Tokenizer) nextString() string {
 	var runes []rune
 	if t.next() != '"' {
+		return ""
+	}
+	if t.peek() == eol {
 		return ""
 	}
 	for t.peek() != '"' {

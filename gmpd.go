@@ -257,10 +257,11 @@ func processCommand(commandString string) ([]byte, int) {
 	response := bufio.NewWriter(&responseBuffer)
 
 	tok := util.NewTokenizer(commandString)
-	command := tok.NextWord()
+	command := tok.NextParam()
 	switch command {
 	case "add":
-		fallthrough
+		songID := tok.NextParam()
+		daemon.playlist.addTrack(songID)
 	case "addid":
 		songID := tok.NextParam()
 		fmt.Fprintf(response, "Id: %d\n", daemon.playlist.addTrack(songID))
@@ -291,7 +292,7 @@ func processCommand(commandString string) ([]byte, int) {
 	case "playid":
 		pos, err := strconv.Atoi(tok.NextParam())
 		if err == nil && pos <= daemon.playlist.length() {
-			filename, err := daemon.playlist.trackAtPosition(pos - 1)
+			filename, err := daemon.playlist.trackAtPosition(pos)
 			if err == nil {
 				url, err := daemon.gpmClient.MP3StreamURL(filename, daemon.deviceID)
 				if err != nil {
@@ -356,8 +357,15 @@ func processCommand(commandString string) ([]byte, int) {
 		}
 
 	case "search":
-		tok.NextParam()
+		var queryBuffer bytes.Buffer
 		query := tok.NextParam()
+		for i := 0; query != ""; i++ {
+			query = tok.NextParam()
+			if i%2 == 0 {
+				queryBuffer.WriteString(query + " ")
+			}
+		}
+		query = queryBuffer.String()
 
 		tracks, err := daemon.gpmClient.SearchAllAccessTracks(query, 200)
 		if err != nil {
@@ -461,7 +469,7 @@ func handleMessage(client net.Conn) {
 		response := []byte("")
 		commandString := strings.TrimSpace(string(line))
 		tok := util.NewTokenizer(commandString)
-		command := tok.NextWord()
+		command := tok.NextParam()
 
 		if daemon.commandList.active == true {
 			if command == ClientListModeEnd {

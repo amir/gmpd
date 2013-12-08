@@ -16,3 +16,27 @@ func TestSearch(t *testing.T) {
 		t.Errorf("Query = %s, want %s", query, "Comfortably Numb")
 	}
 }
+
+func TestUndeterminedParamsEndWithQuotedParam(t *testing.T) {
+	tok := NewTokenizer("a \"b c\" d \"e f\" g \"h i\"")
+	param := tok.NextParam()
+	for param != "" {
+		param = tok.NextParam()
+	}
+}
+
+func TestUndeterminedParamsEndWithNotQuotedParam(t *testing.T) {
+	tok := NewTokenizer("a \"b c\" d \"e f\" g")
+	param := tok.NextParam()
+	for param != "" {
+		param = tok.NextParam()
+	}
+}
+
+func TestSingleWord(t *testing.T) {
+	tok := NewTokenizer("status")
+	command := tok.NextParam()
+	if command != "status" {
+		t.Errorf("Command = %s, Expected: status", command)
+	}
+}
