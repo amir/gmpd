@@ -16,17 +16,13 @@ import (
 	"strings"
 	"time"
 
+	cp "github.com/amir/gmpd/contentprovider"
 	"github.com/amir/gmpd/util"
-	"github.com/amir/gpm"
 	"github.com/amir/gst"
-	"github.com/golang/groupcache/lru"
 	"github.com/ziutek/glib"
 )
 
-const (
-	mpdVersion = "0.17.0"
-	phone      = "PHONE"
-)
+const mpdVersion = "0.17.0"
 
 // MPD ACK_ERRORs
 const (
@@ -67,12 +63,10 @@ type commandList struct {
 
 // gmpd represents a google MPD.
 type gmpd struct {
-	gpmClient      *gpm.Client  // Google Play Music API client
-	playlist       *Playlist    // daemon's playlist
-	startTime      int64        // when daemon started
-	deviceID       string       // User's registered device ID
-	cachedEntities *lru.Cache   // cached results of API calls
-	commandList    *commandList // daemon's queued commands list
+	cp          *cp.ContentProvider // Proxies (and caches) Google Play Music WS calls
+	playlist    *Playlist           // daemon's playlist
+	startTime   int64               // when daemon started
+	commandList *commandList        // daemon's queued commands list
 }
 
 // Player represents a GStreamer playbin for playing music.
@@ -82,13 +76,13 @@ type Player struct {
 }
 
 var (
-	daemon     *gmpd
-	player     *Player
-	albumToIds map[string]string
+	daemon *gmpd
+	player *Player
 
 	serviceAddress = flag.String("address", ":6600", "gMPD service address")
 	email          = flag.String("email", "email", "Google account email")
 	password       = flag.String("password", "password", "Google account password")
+	cacheDir       = flag.String("cache-dir", "", "Cache directory")
 )
 
 // onMessage is GStreamer's playbin bus message callback.
@@ -183,7 +177,7 @@ func (p *Playlist) playNext() {
 	if p.position < p.length() {
 		track, err := p.trackAtPosition(p.position + 1)
 		if err == nil {
-			url, err := daemon.gpmClient.MP3StreamURL(track, daemon.deviceID)
+			url, err := daemon.cp.TrackStreamURL(track)
 			if err == nil {
 				player.play(url)
 				p.position = p.position + 1
@@ -238,23 +232,6 @@ func (c *commandList) reset() {
 	c.active = false
 }
 
-// trackInfo calls Google web service, and caches the response
-func (g *gmpd) trackInfo(filename string) (track util.Track, err error) {
-	t, ok := g.cachedEntities.Get(filename)
-	if ok == false {
-		var tr gpm.Track
-		tr, err = g.gpmClient.TrackInfo(filename)
-		if err != nil {
-			return
-		}
-		track = util.Track(tr)
-	} else {
-		track = t.(util.Track)
-	}
-
-	return
-}
-
 // processCommand process MPD commands, and responds to them
 func processCommand(commandString string) ([]byte, int) {
 	ackError := 0
@@ -276,7 +253,7 @@ func processCommand(commandString string) ([]byte, int) {
 		filename := tok.NextParam()
 		pos := daemon.playlist.trackPosition(filename)
 		if pos > -1 {
-			track, err := daemon.trackInfo(filename)
+			track, err := daemon.cp.FindTrack(filename)
 			if err != nil {
 				ackError = AckErrorNoExist
 			} else {
@@ -299,7 +276,7 @@ func processCommand(commandString string) ([]byte, int) {
 		if err == nil && pos <= daemon.playlist.length() {
 			filename, err := daemon.playlist.trackAtPosition(pos)
 			if err == nil {
-				url, err := daemon.gpmClient.MP3StreamURL(filename, daemon.deviceID)
+				url, err := daemon.cp.TrackStreamURL(filename)
 				if err != nil {
 					ackError = AckErrorNoExist
 				} else {
@@ -334,7 +311,7 @@ func processCommand(commandString string) ([]byte, int) {
 			break
 		}
 
-		track, err := daemon.trackInfo(filename)
+		track, err := daemon.cp.FindTrack(filename)
 		if err != nil {
 			ackError = AckErrorNoExist
 		} else {
@@ -372,15 +349,12 @@ func processCommand(commandString string) ([]byte, int) {
 		}
 		query = queryBuffer.String()
 
-		tracks, err := daemon.gpmClient.SearchAllAccessTracks(query, 200)
+		tracks, err := daemon.cp.FindTracks(query)
 		if err != nil {
 			break
 		}
 		for _, track := range tracks {
-			albumToIds[track.Album] = track.AlbumID
-			t := util.Track(track)
-			daemon.cachedEntities.Add(track.ID, t)
-			fmt.Fprintf(response, "%s", t)
+			fmt.Fprintf(response, "%s", track)
 		}
 
 	case "find":
@@ -388,19 +362,10 @@ func processCommand(commandString string) ([]byte, int) {
 		query := tok.NextParam()
 
 		if queryType == "album" {
-			albumID := albumToIds[query]
-			if albumID != "" {
-				a, ok := daemon.cachedEntities.Get(albumID)
-				var album gpm.Album
-				if ok == false {
-					album, _ = daemon.gpmClient.AlbumInfo(albumID, true)
-				} else {
-					album = a.(gpm.Album)
-				}
+			album, err := daemon.cp.FindAlbum(query, true)
+			if err != nil {
 				for _, track := range album.Tracks {
-					t := util.Track(track)
-					daemon.cachedEntities.Add(track.ID, t)
-					fmt.Fprintf(response, "%s", t)
+					fmt.Fprintf(response, "%s", track)
 				}
 			}
 		}
@@ -416,14 +381,12 @@ func processCommand(commandString string) ([]byte, int) {
 			strconv.FormatInt(now.Unix()-daemon.startTime, 10) + "\n"))
 
 	case "lsinfo":
-		tracks, err := daemon.gpmClient.TrackList()
+		tracks, err := daemon.cp.UserTracks()
 		if err != nil {
 			log.Fatal(err)
 		}
-		for _, track := range tracks.Data.Items {
-			t := util.Track(track)
-			daemon.cachedEntities.Add(track.ID, t)
-			fmt.Fprintf(response, "%s", t)
+		for _, track := range tracks {
+			fmt.Fprintf(response, "%s", track)
 		}
 
 	case "list":
@@ -431,10 +394,19 @@ func processCommand(commandString string) ([]byte, int) {
 		tok.NextParam()
 		query := tok.NextParam()
 		if tagType == "album" {
-			albums, _ := daemon.gpmClient.SearchAllAccessAlbums(query, 200)
+			albums, _ := daemon.cp.FindAlbums(query)
 			for _, album := range albums {
 				fmt.Fprintf(response, "Album: %s\n", album.Name)
 			}
+		}
+
+	case "listplaylists":
+		playlists, err := daemon.cp.Playlists()
+		if err != nil {
+			break
+		}
+		for _, playlist := range playlists {
+			fmt.Fprintf(response, "playlist: %s\n", playlist.Name)
 		}
 
 	case "currentsong":
@@ -443,7 +415,7 @@ func processCommand(commandString string) ([]byte, int) {
 			break
 		}
 		filename, err := daemon.playlist.currentTrack()
-		track, err := daemon.trackInfo(filename)
+		track, err := daemon.cp.FindTrack(filename)
 		if err != nil {
 			ackError = AckErrorNoExist
 			break
@@ -525,17 +497,15 @@ func NewPlayer() *Player {
 
 // NewGmpd allocates a new gmpd.
 func NewGmpd() *gmpd {
-	gpmc := gpm.New(*email, *password)
-	err := gpmc.Login()
+	contentProvider, err := cp.New(*email, *password, *cacheDir)
 	if err != nil {
-		log.Fatalf("Login failed: %s", err.Error())
+		log.Fatal(err)
 	}
 
 	return &gmpd{
-		gpmClient:      gpmc,
-		cachedEntities: lru.New(1000),
-		playlist:       new(Playlist),
-		commandList:    new(commandList),
+		cp:          contentProvider,
+		playlist:    new(Playlist),
+		commandList: new(commandList),
 	}
 }
 
@@ -557,21 +527,12 @@ func mpdListener() {
 
 func init() {
 	flag.Parse()
+	if *cacheDir == "" {
+		*cacheDir = util.CacheDir()
+	}
 	daemon = NewGmpd()
 	player = NewPlayer()
-	albumToIds = make(map[string]string)
 
-	settings, err := daemon.gpmClient.Settings()
-	if err == nil {
-		for _, d := range settings.Settings.Devices {
-			// You need a registered phone
-			if d["type"] == phone {
-				id := d["id"].(string)
-				// Drop 0x
-				daemon.deviceID = id[2:len(id)]
-			}
-		}
-	}
 	now := time.Now()
 	daemon.startTime = now.Unix()
 }
