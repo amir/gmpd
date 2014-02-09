@@ -360,13 +360,20 @@ func processCommand(commandString string) ([]byte, int) {
 	case "find":
 		queryType := tok.NextParam()
 		query := tok.NextParam()
-
-		if queryType == "album" {
+		switch queryType {
+		case "album":
 			album, err := daemon.cp.FindAlbum(query, true)
 			if err != nil {
 				for _, track := range album.Tracks {
 					fmt.Fprintf(response, "%s", track)
 				}
+			}
+		case "artist":
+			tok.NextParam()
+			album := tok.NextParam()
+			tracks := daemon.cp.FindTracksByArtist(query, album)
+			for _, track := range tracks {
+				fmt.Fprintf(response, "%s", track)
 			}
 		}
 
@@ -391,12 +398,46 @@ func processCommand(commandString string) ([]byte, int) {
 
 	case "list":
 		tagType := tok.NextParam()
-		tok.NextParam()
 		query := tok.NextParam()
-		if tagType == "album" {
-			albums, _ := daemon.cp.FindAlbums(query)
+		switch tagType {
+		case "album":
+			var albums []cp.Album
+			if query == "artist" {
+				artist := tok.NextParam()
+				albums = daemon.cp.FindAlbumsByArtistName(artist)
+			} else {
+				albums, _ = daemon.cp.FindAlbums(query)
+			}
 			for _, album := range albums {
 				fmt.Fprintf(response, "Album: %s\n", album.Name)
+			}
+		case "artist":
+			artists := daemon.cp.ListArtists(query)
+			for _, artist := range artists {
+				fmt.Fprintf(response, "Artist: %s\n", artist.Name)
+			}
+		case "date":
+			if query == "artist" {
+				artist := tok.NextParam()
+				tok.NextParam() // should be tag name, ignore it.
+				album := tok.NextParam()
+				log.Printf("Album is: %v", album)
+				albums := daemon.cp.FindAlbumsByArtistName(artist)
+				years := make(map[uint16]bool)
+				for _, a := range albums {
+					if !years[a.Year] {
+						if album != "" {
+							if a.Name == album {
+								years[a.Year] = true
+							}
+						} else {
+							years[a.Year] = true
+						}
+					}
+				}
+				for k, _ := range years {
+					fmt.Fprintf(response, "Date: %d\n", k)
+				}
 			}
 		}
 

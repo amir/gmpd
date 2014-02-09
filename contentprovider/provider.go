@@ -25,6 +25,9 @@ type Track gpm.Track
 // Track is a gpm.Album type alias.
 type Album gpm.Album
 
+// Artist is a gpm.Artist type alias.
+type Artist gpm.Artist
+
 // String returns MPD-response-formatted representation of a track.
 func (t Track) String() string {
 	var buffer bytes.Buffer
@@ -60,7 +63,8 @@ var sqlCreateTables []string = []string{
 	`CREATE TABLE albums (
     id VARCHAR(255) NOT NULL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
-    artist VARCHAR(255) NOT NULL)`,
+    artist VARCHAR(255) NOT NULL,
+    year CHAR(4))`,
 }
 
 func New(email, password, cacheDir string) (*ContentProvider, error) {
@@ -171,9 +175,9 @@ func (cp *ContentProvider) retrieveTrack(trackID string) Track {
 }
 
 func (cp *ContentProvider) persistAlbum(album Album) {
-	stmt, _ := cp.db.Prepare("INSERT INTO albums(id, name, artist) VALUES (?, ?, ?)")
+	stmt, _ := cp.db.Prepare("INSERT INTO albums(id, name, artist, year) VALUES (?, ?, ?, ?)")
 
-	stmt.Exec(album.ID, album.Name, album.Artist)
+	stmt.Exec(album.ID, album.Name, album.Artist, album.Year)
 }
 
 func (cp *ContentProvider) TrackStreamURL(track string) (string, error) {
@@ -257,4 +261,68 @@ func (cp *ContentProvider) UserTracks() ([]Track, error) {
 	}
 
 	return tracks, nil
+}
+
+func (cp *ContentProvider) ListArtists(query string) []Artist {
+	var artists []Artist
+	stmt, err := cp.db.Prepare(`SELECT DISTINCT(artist) FROM albums WHERE
+	  artist LIKE ? AND artist <> ""`)
+	if err != nil {
+		return artists
+	}
+	defer stmt.Close()
+	rows, err := stmt.Query(fmt.Sprintf("%%%s%%", query))
+	if err != nil {
+		return artists
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var artist Artist
+		rows.Scan(&artist.Name)
+		artists = append(artists, artist)
+	}
+
+	return artists
+}
+
+func (cp *ContentProvider) FindAlbumsByArtistName(artist string) []Album {
+	var albums []Album
+	stmt, err := cp.db.Prepare(`SELECT id, name, artist, year FROM albums WHERE artist = ?`)
+	if err != nil {
+		return albums
+	}
+	defer stmt.Close()
+	rows, err := stmt.Query(artist)
+	if err != nil {
+		return albums
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var album Album
+		rows.Scan(&album.ID, &album.Name, &album.Artist, &album.Year)
+		albums = append(albums, album)
+	}
+
+	return albums
+}
+
+func (cp *ContentProvider) FindTracksByArtist(artist, album string) []Track {
+	var tracks []Track
+	stmt, err := cp.db.Prepare(`SELECT id, nid, title, album, albumId, artist, duration FROM tracks WHERE artist = ? AND album LIKE ?`)
+	if err != nil {
+		return tracks
+	}
+	defer stmt.Close()
+	rows, err := stmt.Query(artist, fmt.Sprintf("%%%s%%", album))
+	if err != nil {
+		return tracks
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var track Track
+		rows.Scan(&track.ID, &track.Nid, &track.Title, &track.Album, &track.AlbumID, &track.Artist, &track.DurationMillis)
+		tracks = append(tracks, track)
+	}
+
+	return tracks
 }
